@@ -1,10 +1,10 @@
 package blockchainstore
 
-import "github.com/gouniverse/sb"
+import "github.com/dracory/sb"
 
 // SQLCreateTable returns a SQL string for creating the cache table
-func (st *Store) sqlCreateTable() string {
-	sql := sb.NewBuilder(st.dbDriverName).
+func (st *Store) sqlCreateTable() (string, error) {
+	sql, err := sb.NewBuilder(st.dbDriverName).
 		Table(st.blockTableName).
 		Column(sb.Column{
 			Name:       "id",
@@ -40,5 +40,5 @@ func (st *Store) sqlCreateTable() string {
 		}).
 		CreateIfNotExists()
 
-	return sql
+	return sql, err
 }

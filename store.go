@@ -10,8 +10,8 @@ import (
 
 	"github.com/doug-martin/goqu/v9"
 	"github.com/dromara/carbon/v2"
-	"github.com/gouniverse/base/database"
-	"github.com/gouniverse/sb"
+	"github.com/dracory/database"
+	"github.com/dracory/sb"
 	"github.com/samber/lo"
 )
 
@@ -31,9 +31,13 @@ type Store struct {
 
 // AutoMigrate auto migrate
 func (store *Store) AutoMigrate() error {
-	sql := store.sqlCreateTable()
+	sql, err := store.sqlCreateTable()
+	if err != nil {
+		log.Println(err)
+		return err
+	}
 
-	_, err := store.db.Exec(sql)
+	_, err = store.db.Exec(sql)
 	if err != nil {
 		log.Println(err)
 		return err
@@ -50,7 +54,7 @@ func (st *Store) EnableDebug(debug bool) {
 func (store *Store) BlockCreate(ctx context.Context, block *Block) error {
 	block.SetTimestamp(carbon.Now(carbon.UTC).ToDateTimeString(carbon.UTC))
 
-	data := block.Data()
+	data := blockToMap(block)
 
 	sqlStr, sqlParams, errSql := goqu.Dialect(store.dbDriverName).
 		Insert(store.blockTableName).
@@ -145,7 +149,7 @@ func (store *Store) BlockList(ctx context.Context, options BlockQueryOptions) ([
 	list := []Block{}
 
 	lo.ForEach(modelMaps, func(modelMap map[string]string, index int) {
-		model := NewBlockFromExistingData(modelMap)
+		model := mapToBlock(modelMap)
 		list = append(list, *model)
 	})
 
@@ -179,11 +183,14 @@ func (store *Store) BlockUpdate(ctx context.Context, block *Block) error {
 
 	// block.SetUpdatedAt(carbon.Now(carbon.UTC).ToDateTimeString())
 
-	dataChanged := block.DataChanged()
-
-	delete(dataChanged, "id")   // ID is not updateable
-	delete(dataChanged, "hash") // Hash is not updateable
-	delete(dataChanged, "data") // Data is not updateable
+	rawChanged := block.DataChanged()
+	dataChanged := map[string]interface{}{}
+	if _, ok := rawChanged["previous_hash"]; ok {
+		dataChanged["parent_id"] = block.PreviousHash()
+	}
+	if _, ok := rawChanged["deleted_at"]; ok {
+		dataChanged["deleted_at"] = block.Get("deleted_at")
+	}
 
 	if len(dataChanged) < 1 {
 		return nil
@@ -286,4 +293,34 @@ func (store *Store) toQuerableContext(context context.Context) database.Queryabl
 	}
 
 	return database.Context(context, store.db)
+}
+
+func blockToMap(block *Block) map[string]interface{} {
+	m := map[string]interface{}{}
+	m["id"] = block.ID()
+	m["parent_id"] = block.PreviousHash()
+	m["data"] = block.Data()
+	m["hash"] = block.ThisHash()
+	m["created_at"] = block.Timestamp()
+	m["updated_at"] = block.Timestamp()
+	if block.Get("deleted_at") != "" {
+		m["deleted_at"] = block.Get("deleted_at")
+	} else {
+		m["deleted_at"] = sb.NULL_DATETIME
+	}
+	return m
+}
+
+func mapToBlock(m map[string]string) *Block {
+	block := NewBlock()
+	block.SetID(m["id"])
+	block.SetPreviousHash(m["parent_id"])
+	block.SetData(m["data"])
+	block.SetThisHash(m["hash"])
+	block.SetTimestamp(m["created_at"])
+	if deletedAt, ok := m["deleted_at"]; ok {
+		block.Set("deleted_at", deletedAt)
+	}
+	block.MarkAsNotDirty()
+	return block
 }

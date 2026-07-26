@@ -1,6 +1,6 @@
 package blockchainstore
 
-import "github.com/gouniverse/dataobject"
+import "github.com/dracory/dataobject"
 
 type Blockchain struct {
 	dataobject.DataObject
