@@ -1,11 +1,9 @@
 package blockchainstore
 
 import (
+	"github.com/dracory/dataobject"
+	"github.com/dracory/uid"
 	"github.com/dromara/carbon/v2"
-	"github.com/gouniverse/dataobject"
-	"github.com/gouniverse/maputils"
-	"github.com/gouniverse/uid"
-	"github.com/gouniverse/utils"
 )
 
 type Block struct {
@@ -30,11 +28,11 @@ func NewBlockFromExistingData(data map[string]string) *Block {
 }
 
 func NewBlockFromJSON(json string) *Block {
-	data, err := utils.FromJSON(json, nil)
+	data, err := fromJSON(json, nil)
 	if err != nil {
 		return nil
 	}
-	blockMap := maputils.AnyToMapStringString(data)
+	blockMap := anyToMapStringString(data)
 	return NewBlockFromExistingData(blockMap)
 }
 
