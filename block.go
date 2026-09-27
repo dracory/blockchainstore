@@ -22,9 +22,9 @@ func NewBlock() BlockInterface {
 	block := &Block{}
 	block.SetID(uid.HumanUid())
 	block.SetTimestamp(carbon.Now(carbon.UTC).ToDateTimeString(carbon.UTC))
-	block.Set("previous_hash", "") // the hash of the previous block
-	block.Set("this_hash", "")     // the hash of the current block
-	block.Set("data", "")          // the data or transactions (body info)
+	block.Set(COLUMN_PREVIOUS_HASH, "") // the hash of the previous block
+	block.Set(COLUMN_THIS_HASH, "")     // the hash of the current block
+	block.Set(COLUMN_DATA, "")          // the data or transactions (body info)
 
 	return block
 }
@@ -87,7 +87,7 @@ func (o *Block) SetID(id string) BlockInterface {
 }
 
 func (o *Block) Timestamp() string {
-	return o.Get("timestamp")
+	return o.Get(COLUMN_TIMESTAMP)
 }
 
 func (o *Block) GetTimestamp() string {
@@ -95,12 +95,12 @@ func (o *Block) GetTimestamp() string {
 }
 
 func (o *Block) SetTimestamp(timestamp string) BlockInterface {
-	o.Set("timestamp", timestamp)
+	o.Set(COLUMN_TIMESTAMP, timestamp)
 	return o
 }
 
 func (o *Block) PreviousHash() string {
-	return o.Get("previous_hash")
+	return o.Get(COLUMN_PREVIOUS_HASH)
 }
 
 func (o *Block) GetPreviousHash() string {
@@ -108,12 +108,12 @@ func (o *Block) GetPreviousHash() string {
 }
 
 func (o *Block) SetPreviousHash(previousHash string) BlockInterface {
-	o.Set("previous_hash", previousHash)
+	o.Set(COLUMN_PREVIOUS_HASH, previousHash)
 	return o
 }
 
 func (o *Block) ThisHash() string {
-	return o.Get("this_hash")
+	return o.Get(COLUMN_THIS_HASH)
 }
 
 func (o *Block) GetThisHash() string {
@@ -121,16 +121,16 @@ func (o *Block) GetThisHash() string {
 }
 
 func (o *Block) SetThisHash(thisHash string) BlockInterface {
-	o.Set("this_hash", thisHash)
+	o.Set(COLUMN_THIS_HASH, thisHash)
 	return o
 }
 
 func (o *Block) Data() string {
-	return o.Get("data")
+	return o.Get(COLUMN_DATA)
 }
 
 func (o *Block) SetData(data string) BlockInterface {
-	o.Set("data", data)
+	o.Set(COLUMN_DATA, data)
 	return o
 }
 

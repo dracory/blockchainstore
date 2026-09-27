@@ -47,14 +47,14 @@ func (store *Store) AutoMigrate() error {
 func (store *Store) MigrateUp(ctx context.Context, tx ...*sql.Tx) error {
 	if !store.db.Schema().HasTable(store.blockTableName) {
 		err := store.db.Schema().Create(store.blockTableName, func(table contractsschema.Blueprint) {
-			table.String("id", 40)
-			table.Primary("id")
-			table.String("parent_id", 40).Default("")
-			table.LongText("data")
-			table.String("hash", 200).Default("")
-			table.DateTime("created_at").GetUseCurrent()
-			table.DateTime("updated_at").GetUseCurrent()
-			table.DateTime("deleted_at").Default(constants.MaxSoftDeletedAtDefault)
+			table.String(COLUMN_ID, 40)
+			table.Primary(COLUMN_ID)
+			table.String(COLUMN_PARENT_ID, 40).Default("")
+			table.LongText(COLUMN_DATA)
+			table.String(COLUMN_HASH, 200).Default("")
+			table.DateTime(COLUMN_CREATED_AT).GetUseCurrent()
+			table.DateTime(COLUMN_UPDATED_AT).GetUseCurrent()
+			table.DateTime(COLUMN_DELETED_AT).Default(constants.MaxSoftDeletedAtDefault)
 		})
 		if err != nil {
 			log.Println(err)
@@ -97,12 +97,7 @@ func (store *Store) BlockCreate(ctx context.Context, block BlockInterface) error
 		block.SetTimestamp(carbon.Now(carbon.UTC).ToDateTimeString(carbon.UTC))
 	}
 
-	db, err := store.db.DB()
-	if err != nil {
-		return err
-	}
-
-	deletedAt := block.Get("deleted_at")
+	deletedAt := block.Get(COLUMN_DELETED_AT)
 	var deletedAtTime time.Time
 	if deletedAt != "" && deletedAt != constants.MaxSoftDeletedAtDefault {
 		deletedAtTime = carbon.Parse(deletedAt, carbon.UTC).StdTime()
@@ -112,16 +107,17 @@ func (store *Store) BlockCreate(ctx context.Context, block BlockInterface) error
 
 	createdAtTime := carbon.Parse(block.Timestamp(), carbon.UTC).StdTime()
 
-	_, err = db.ExecContext(ctx,
-		"INSERT INTO "+store.blockTableName+" (id, parent_id, data, hash, created_at, updated_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-		block.GetID(),
-		block.PreviousHash(),
-		block.Data(),
-		block.ThisHash(),
-		createdAtTime,
-		createdAtTime,
-		deletedAtTime,
-	)
+	row := blockRow{
+		ID:        block.GetID(),
+		ParentID:  block.PreviousHash(),
+		Data:      block.Data(),
+		Hash:      block.ThisHash(),
+		CreatedAt: createdAtTime,
+		UpdatedAt: createdAtTime,
+		DeletedAt: deletedAtTime,
+	}
+
+	err := store.db.Query().Table(store.blockTableName).Create(&row)
 	if err != nil {
 		return err
 	}
@@ -149,7 +145,7 @@ func (store *Store) BlockDeleteByID(ctx context.Context, id string) error {
 
 	_, err := store.db.Query().
 		Table(store.blockTableName).
-		Where("id = ?", id).
+		Where(COLUMN_ID+" = ?", id).
 		Delete()
 
 	return err
@@ -208,21 +204,21 @@ func (store *Store) BlockUpdate(ctx context.Context, block BlockInterface) error
 
 	rawChanged := block.GetDataChanged()
 	dataChanged := map[string]interface{}{}
-	if _, ok := rawChanged["previous_hash"]; ok {
-		dataChanged["parent_id"] = block.PreviousHash()
+	if _, ok := rawChanged[COLUMN_PREVIOUS_HASH]; ok {
+		dataChanged[COLUMN_PARENT_ID] = block.PreviousHash()
 	}
-	if _, ok := rawChanged["this_hash"]; ok {
-		dataChanged["hash"] = block.ThisHash()
+	if _, ok := rawChanged[COLUMN_THIS_HASH]; ok {
+		dataChanged[COLUMN_HASH] = block.ThisHash()
 	}
-	if _, ok := rawChanged["data"]; ok {
-		dataChanged["data"] = block.Data()
+	if _, ok := rawChanged[COLUMN_DATA]; ok {
+		dataChanged[COLUMN_DATA] = block.Data()
 	}
-	if _, ok := rawChanged["deleted_at"]; ok {
-		deletedAt := block.Get("deleted_at")
+	if _, ok := rawChanged[COLUMN_DELETED_AT]; ok {
+		deletedAt := block.Get(COLUMN_DELETED_AT)
 		if deletedAt != "" && deletedAt != constants.MaxSoftDeletedAtDefault {
-			dataChanged["deleted_at"] = carbon.Parse(deletedAt, carbon.UTC).StdTime()
+			dataChanged[COLUMN_DELETED_AT] = carbon.Parse(deletedAt, carbon.UTC).StdTime()
 		} else {
-			dataChanged["deleted_at"] = carbon.Parse(constants.MaxSoftDeletedAtDefault, carbon.UTC).StdTime()
+			dataChanged[COLUMN_DELETED_AT] = carbon.Parse(constants.MaxSoftDeletedAtDefault, carbon.UTC).StdTime()
 		}
 	}
 
@@ -230,11 +226,11 @@ func (store *Store) BlockUpdate(ctx context.Context, block BlockInterface) error
 		return nil
 	}
 
-	dataChanged["updated_at"] = carbon.Now(carbon.UTC).StdTime()
+	dataChanged[COLUMN_UPDATED_AT] = carbon.Now(carbon.UTC).StdTime()
 
 	_, err := store.db.Query().
 		Table(store.blockTableName).
-		Where("id = ?", block.GetID()).
+		Where(COLUMN_ID+" = ?", block.GetID()).
 		Update(dataChanged)
 
 	if err != nil {
@@ -250,11 +246,11 @@ func (store *Store) blockQuery(options BlockQueryOptions) ormcontracts.Query {
 	q := store.db.Query().Table(store.blockTableName)
 
 	if options.ID != "" {
-		q = q.Where("id = ?", options.ID)
+		q = q.Where(COLUMN_ID+" = ?", options.ID)
 	}
 
 	if len(options.IDIn) > 0 {
-		inClause := "id IN ("
+		inClause := COLUMN_ID + " IN ("
 		placeholders := make([]interface{}, 0, len(options.IDIn))
 		for i, id := range options.IDIn {
 			if i > 0 {
@@ -288,7 +284,7 @@ func (store *Store) blockQuery(options BlockQueryOptions) ormcontracts.Query {
 	if options.WithDeleted {
 		q = q.WithSoftDeleted()
 	} else {
-		q = q.Where("deleted_at > ?", carbon.Now(carbon.UTC).StdTime())
+		q = q.Where(COLUMN_DELETED_AT+" > ?", carbon.Now(carbon.UTC).StdTime())
 	}
 
 	return q
@@ -324,7 +320,7 @@ func mapRowToBlock(r blockRow) BlockInterface {
 	block.SetThisHash(r.Hash)
 	block.SetTimestamp(carbon.CreateFromStdTime(r.CreatedAt).ToDateTimeString(carbon.UTC))
 	if !r.DeletedAt.IsZero() && carbon.CreateFromStdTime(r.DeletedAt).ToDateTimeString(carbon.UTC) != constants.MaxSoftDeletedAtDefault {
-		block.Set("deleted_at", carbon.CreateFromStdTime(r.DeletedAt).ToDateTimeString(carbon.UTC))
+		block.Set(COLUMN_DELETED_AT, carbon.CreateFromStdTime(r.DeletedAt).ToDateTimeString(carbon.UTC))
 	}
 	block.MarkAsNotDirty()
 	return block
