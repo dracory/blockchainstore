@@ -7,63 +7,117 @@ import (
 	"log"
 	"log/slog"
 	"strings"
+	"time"
 
-	"github.com/dracory/database"
 	"github.com/dracory/neat"
 	ormcontracts "github.com/dracory/neat/contracts/database/orm"
-	"github.com/dracory/sb"
+	contractsschema "github.com/dracory/neat/contracts/database/schema"
+	"github.com/dracory/neat/database/schema/constants"
+	"github.com/dracory/uid"
 	"github.com/dromara/carbon/v2"
-	"github.com/samber/lo"
 )
-
-const BLOCK_TABLE_NAME = "blocks_block"
 
 var _ StoreInterface = (*Store)(nil) // verify it extends the interface
 
 type Store struct {
 	blockTableName     string
-	db                 *sql.DB
-	neatDB             *neat.Database
-	dbDriverName       string
+	db                 *neat.Database
 	timeoutSeconds     int64
 	automigrateEnabled bool
 	debugEnabled       bool
 	sqlLogger          *slog.Logger
 }
 
+type blockRow struct {
+	ID        string    `db:"id"`
+	ParentID  string    `db:"parent_id"`
+	Data      string    `db:"data"`
+	Hash      string    `db:"hash"`
+	CreatedAt time.Time `db:"created_at"`
+	UpdatedAt time.Time `db:"updated_at"`
+	DeletedAt time.Time `db:"deleted_at"`
+}
+
 // AutoMigrate auto migrate
 func (store *Store) AutoMigrate() error {
-	sql, err := store.sqlCreateTable()
-	if err != nil {
-		log.Println(err)
-		return err
-	}
+	return store.MigrateUp(context.Background())
+}
 
-	_, err = store.db.Exec(sql)
-	if err != nil {
-		log.Println(err)
-		return err
+// MigrateUp creates the block store tables
+func (store *Store) MigrateUp(ctx context.Context, tx ...*sql.Tx) error {
+	if !store.db.Schema().HasTable(store.blockTableName) {
+		err := store.db.Schema().Create(store.blockTableName, func(table contractsschema.Blueprint) {
+			table.String(COLUMN_ID, 40)
+			table.Primary(COLUMN_ID)
+			table.String(COLUMN_PARENT_ID, 40).Default("")
+			table.LongText(COLUMN_DATA)
+			table.String(COLUMN_HASH, 200).Default("")
+			table.DateTime(COLUMN_CREATED_AT).GetUseCurrent()
+			table.DateTime(COLUMN_UPDATED_AT).GetUseCurrent()
+			table.DateTime(COLUMN_DELETED_AT).Default(constants.MaxSoftDeletedAtDefault)
+		})
+		if err != nil {
+			log.Println(err)
+			return err
+		}
 	}
+	return nil
+}
 
+// MigrateDown drops the block store tables
+func (store *Store) MigrateDown(ctx context.Context, tx ...*sql.Tx) error {
+	if store.db.Schema().HasTable(store.blockTableName) {
+		err := store.db.Schema().Drop(store.blockTableName)
+		if err != nil {
+			log.Println(err)
+			return err
+		}
+	}
 	return nil
 }
 
 // EnableDebug - enables the debug option
-func (st *Store) EnableDebug(debug bool) {
+func (st *Store) EnableDebug(debug bool) StoreInterface {
 	st.debugEnabled = debug
+	return st
 }
 
-func (store *Store) BlockCreate(ctx context.Context, block *Block) error {
-	block.SetTimestamp(carbon.Now(carbon.UTC).ToDateTimeString(carbon.UTC))
+func (store *Store) BlockCreate(ctx context.Context, block BlockInterface) error {
+	if ctx == nil {
+		return errors.New("ctx is nil")
+	}
+	if block == nil {
+		return errors.New("block is nil")
+	}
 
-	data := blockToMap(block)
+	if block.GetID() == "" {
+		block.SetID(uid.HumanUid())
+	}
+	if block.Timestamp() == "" {
+		block.SetTimestamp(carbon.Now(carbon.UTC).ToDateTimeString(carbon.UTC))
+	}
 
-	query := store.neatDB.Query().Table(store.blockTableName)
-	sqlStr := query.ToRawSql().Create(data)
+	deletedAt := block.Get(COLUMN_DELETED_AT)
+	var deletedAtTime time.Time
+	if deletedAt != "" && deletedAt != constants.MaxSoftDeletedAtDefault {
+		deletedAtTime = carbon.Parse(deletedAt, carbon.UTC).StdTime()
+	} else {
+		deletedAtTime = carbon.Parse(constants.MaxSoftDeletedAtDefault, carbon.UTC).StdTime()
+	}
 
-	store.logSql("insert", sqlStr)
+	createdAtTime := carbon.Parse(block.Timestamp(), carbon.UTC).StdTime()
 
-	_, err := database.Execute(store.toQuerableContext(ctx), sqlStr)
+	row := blockRow{
+		ID:        block.GetID(),
+		ParentID:  block.PreviousHash(),
+		Data:      block.Data(),
+		Hash:      block.ThisHash(),
+		CreatedAt: createdAtTime,
+		UpdatedAt: createdAtTime,
+		DeletedAt: deletedAtTime,
+	}
+
+	err := store.db.Query().Table(store.blockTableName).Create(&row)
 	if err != nil {
 		return err
 	}
@@ -73,32 +127,33 @@ func (store *Store) BlockCreate(ctx context.Context, block *Block) error {
 	return nil
 }
 
-func (store *Store) BlockDelete(ctx context.Context, block *Block) error {
+func (store *Store) BlockDelete(ctx context.Context, block BlockInterface) error {
 	if block == nil {
 		return errors.New("block is nil")
 	}
 
-	return store.BlockDeleteByID(ctx, block.ID())
+	return store.BlockDeleteByID(ctx, block.GetID())
 }
 
 func (store *Store) BlockDeleteByID(ctx context.Context, id string) error {
+	if ctx == nil {
+		return errors.New("ctx is nil")
+	}
 	if id == "" {
 		return errors.New("block id is empty")
 	}
 
-	query := store.neatDB.Query().Table(store.blockTableName).Where("id = ?", id)
-	sqlStr := query.ToRawSql().Delete()
-
-	store.logSql("delete", sqlStr)
-
-	_, err := database.Execute(store.toQuerableContext(ctx), sqlStr)
+	_, err := store.db.Query().
+		Table(store.blockTableName).
+		Where(COLUMN_ID+" = ?", id).
+		Delete()
 
 	return err
 }
 
-func (store *Store) BlockFindByID(ctx context.Context, id string) (*Block, error) {
+func (store *Store) BlockFindByID(ctx context.Context, id string) (BlockInterface, error) {
 	if id == "" {
-		return nil, errors.New("exam id is empty")
+		return nil, errors.New("block id is empty")
 	}
 
 	list, err := store.BlockList(ctx, BlockQueryOptions{
@@ -111,69 +166,101 @@ func (store *Store) BlockFindByID(ctx context.Context, id string) (*Block, error
 	}
 
 	if len(list) > 0 {
-		return &list[0], nil
+		return list[0], nil
 	}
 
 	return nil, nil
 }
 
-func (store *Store) BlockList(ctx context.Context, options BlockQueryOptions) ([]Block, error) {
-	q := store.blockQuery(options)
-
-	sqlStr := q.ToRawSql().Get(nil)
-
-	store.logSql("select", sqlStr)
-
-	modelMaps, err := database.SelectToMapString(store.toQuerableContext(ctx), sqlStr)
-	if err != nil {
-		return []Block{}, err
+func (store *Store) BlockList(ctx context.Context, options BlockQueryOptions) ([]BlockInterface, error) {
+	if ctx == nil {
+		return nil, errors.New("ctx is nil")
 	}
 
-	list := []Block{}
+	q := store.blockQuery(options)
 
-	lo.ForEach(modelMaps, func(modelMap map[string]string, index int) {
-		model := mapToBlock(modelMap)
-		list = append(list, *model)
-	})
+	var rows []blockRow
+	if err := q.Table(store.blockTableName).Get(&rows); err != nil {
+		return []BlockInterface{}, err
+	}
+
+	list := make([]BlockInterface, 0, len(rows))
+
+	for _, r := range rows {
+		model := mapRowToBlock(r)
+		list = append(list, model)
+	}
 
 	return list, nil
 }
 
-func (store *Store) BlockUpdate(ctx context.Context, block *Block) error {
+func (store *Store) BlockUpdate(ctx context.Context, block BlockInterface) error {
+	if ctx == nil {
+		return errors.New("ctx is nil")
+	}
 	if block == nil {
-		return errors.New("order is nil")
+		return errors.New("block is nil")
 	}
 
-	rawChanged := block.DataChanged()
+	rawChanged := block.GetDataChanged()
 	dataChanged := map[string]interface{}{}
-	if _, ok := rawChanged["previous_hash"]; ok {
-		dataChanged["parent_id"] = block.PreviousHash()
+	if _, ok := rawChanged[COLUMN_PREVIOUS_HASH]; ok {
+		dataChanged[COLUMN_PARENT_ID] = block.PreviousHash()
 	}
-	if _, ok := rawChanged["deleted_at"]; ok {
-		dataChanged["deleted_at"] = block.Get("deleted_at")
+	if _, ok := rawChanged[COLUMN_THIS_HASH]; ok {
+		dataChanged[COLUMN_HASH] = block.ThisHash()
+	}
+	if _, ok := rawChanged[COLUMN_DATA]; ok {
+		dataChanged[COLUMN_DATA] = block.Data()
+	}
+	if _, ok := rawChanged[COLUMN_DELETED_AT]; ok {
+		deletedAt := block.Get(COLUMN_DELETED_AT)
+		if deletedAt != "" && deletedAt != constants.MaxSoftDeletedAtDefault {
+			dataChanged[COLUMN_DELETED_AT] = carbon.Parse(deletedAt, carbon.UTC).StdTime()
+		} else {
+			dataChanged[COLUMN_DELETED_AT] = carbon.Parse(constants.MaxSoftDeletedAtDefault, carbon.UTC).StdTime()
+		}
 	}
 
 	if len(dataChanged) < 1 {
 		return nil
 	}
 
-	query := store.neatDB.Query().Table(store.blockTableName).Where("id = ?", block.ID())
-	sqlStr := query.ToRawSql().Update(dataChanged)
+	dataChanged[COLUMN_UPDATED_AT] = carbon.Now(carbon.UTC).StdTime()
 
-	store.logSql("update", sqlStr)
+	_, err := store.db.Query().
+		Table(store.blockTableName).
+		Where(COLUMN_ID+" = ?", block.GetID()).
+		Update(dataChanged)
 
-	_, err := database.Execute(store.toQuerableContext(ctx), sqlStr)
+	if err != nil {
+		return err
+	}
 
 	block.MarkAsNotDirty()
 
-	return err
+	return nil
 }
 
 func (store *Store) blockQuery(options BlockQueryOptions) ormcontracts.Query {
-	q := store.neatDB.Query().Table(store.blockTableName)
+	q := store.db.Query().Table(store.blockTableName)
 
 	if options.ID != "" {
-		q = q.Where("id = ?", options.ID)
+		q = q.Where(COLUMN_ID+" = ?", options.ID)
+	}
+
+	if len(options.IDIn) > 0 {
+		inClause := COLUMN_ID + " IN ("
+		placeholders := make([]interface{}, 0, len(options.IDIn))
+		for i, id := range options.IDIn {
+			if i > 0 {
+				inClause += ", "
+			}
+			inClause += "?"
+			placeholders = append(placeholders, id)
+		}
+		inClause += ")"
+		q = q.Where(inClause, placeholders...)
 	}
 
 	if !options.CountOnly {
@@ -186,21 +273,18 @@ func (store *Store) blockQuery(options BlockQueryOptions) ormcontracts.Query {
 		}
 	}
 
-	sortOrder := "desc"
-	if options.SortOrder != "" {
-		sortOrder = options.SortOrder
-	}
-
 	if options.OrderBy != "" {
-		if strings.EqualFold(sortOrder, sb.ASC) {
-			q = q.OrderBy(options.OrderBy, "asc")
-		} else {
-			q = q.OrderBy(options.OrderBy, "desc")
+		sortOrder := "desc"
+		if options.SortOrder != "" {
+			sortOrder = strings.ToLower(options.SortOrder)
 		}
+		q = q.OrderBy(options.OrderBy, sortOrder)
 	}
 
-	if !options.WithDeleted {
-		q = q.Where("deleted_at = ?", sb.NULL_DATETIME)
+	if options.WithDeleted {
+		q = q.WithSoftDeleted()
+	} else {
+		q = q.Where(COLUMN_DELETED_AT+" > ?", carbon.Now(carbon.UTC).StdTime())
 	}
 
 	return q
@@ -228,39 +312,15 @@ func (store *Store) logSql(sqlOperationType string, sql string, params ...interf
 	}
 }
 
-func (store *Store) toQuerableContext(context context.Context) database.QueryableContext {
-	if database.IsQueryableContext(context) {
-		return context.(database.QueryableContext)
-	}
-
-	return database.Context(context, store.db)
-}
-
-func blockToMap(block *Block) map[string]interface{} {
-	m := map[string]interface{}{}
-	m["id"] = block.ID()
-	m["parent_id"] = block.PreviousHash()
-	m["data"] = block.Data()
-	m["hash"] = block.ThisHash()
-	m["created_at"] = block.Timestamp()
-	m["updated_at"] = block.Timestamp()
-	if block.Get("deleted_at") != "" {
-		m["deleted_at"] = block.Get("deleted_at")
-	} else {
-		m["deleted_at"] = sb.NULL_DATETIME
-	}
-	return m
-}
-
-func mapToBlock(m map[string]string) *Block {
+func mapRowToBlock(r blockRow) BlockInterface {
 	block := NewBlock()
-	block.SetID(m["id"])
-	block.SetPreviousHash(m["parent_id"])
-	block.SetData(m["data"])
-	block.SetThisHash(m["hash"])
-	block.SetTimestamp(m["created_at"])
-	if deletedAt, ok := m["deleted_at"]; ok {
-		block.Set("deleted_at", deletedAt)
+	block.SetID(r.ID)
+	block.SetPreviousHash(r.ParentID)
+	block.SetData(r.Data)
+	block.SetThisHash(r.Hash)
+	block.SetTimestamp(carbon.CreateFromStdTime(r.CreatedAt).ToDateTimeString(carbon.UTC))
+	if !r.DeletedAt.IsZero() && carbon.CreateFromStdTime(r.DeletedAt).ToDateTimeString(carbon.UTC) != constants.MaxSoftDeletedAtDefault {
+		block.Set(COLUMN_DELETED_AT, carbon.CreateFromStdTime(r.DeletedAt).ToDateTimeString(carbon.UTC))
 	}
 	block.MarkAsNotDirty()
 	return block

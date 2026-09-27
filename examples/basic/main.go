@@ -23,21 +23,18 @@ func runBasicExample(db *sql.DB) error {
 		return fmt.Errorf("failed to create store: %w", err)
 	}
 
-	// Create a new block
-	block := blockchainstore.NewBlock()
-	block.SetData("Sample Transaction Data")
-	block.SetPreviousHash("0000000000000000000000000000000000000000000000000000000000000000")
-	block.SetThisHash("a1b2c3d4e5f67890a1b2c3d4e5f67890a1b2c3d4e5f67890a1b2c3d4e5f67890")
+	// Create a new genesis block using fluent setters and hash helpers
+	block := blockchainstore.NewGenesisBlock("Sample Transaction Data")
 
 	err = store.BlockCreate(ctx, block)
 	if err != nil {
 		return fmt.Errorf("failed to create block: %w", err)
 	}
 
-	fmt.Printf("Created block with ID: %s\n", block.ID())
+	fmt.Printf("Created block with ID: %s\n", block.GetID())
 
 	// Retrieve block by ID
-	foundBlock, err := store.BlockFindByID(ctx, block.ID())
+	foundBlock, err := store.BlockFindByID(ctx, block.GetID())
 	if err != nil {
 		return fmt.Errorf("failed to find block by ID: %w", err)
 	}
@@ -46,7 +43,7 @@ func runBasicExample(db *sql.DB) error {
 		return fmt.Errorf("block not found")
 	}
 
-	fmt.Printf("Retrieved Block ID: %s, Data: %s, Hash: %s\n", foundBlock.ID(), foundBlock.Data(), foundBlock.ThisHash())
+	fmt.Printf("Retrieved Block ID: %s, Data: %s, Hash: %s\n", foundBlock.GetID(), foundBlock.Data(), foundBlock.ThisHash())
 	return nil
 }
 

@@ -4,10 +4,11 @@
 
 ## Features
 
-- **Database Agnostic SQL Store**: Uses `dracory/neat` for SQL query generation across various database drivers.
-- **Auto Migration**: Automatically creates and manages the block store database table schema.
-- **Rich Querying**: Flexible block listing options including filtering by ID, limit, offset, sorting, and soft deletion.
-- **Clean Block Abstraction**: Methods for reading and writing block header fields (`PreviousHash`, `ThisHash`, `Data`, `Timestamp`, etc.).
+- **Database Agnostic SQL Store**: Uses `dracory/neat` for SQL query generation and database schema migrations across various database drivers.
+- **Fluent Setters**: `BlockInterface` supports method chaining for concise block construction and modifications.
+- **Convenience Hash & Chain Helpers**: Built-in initial genesis hash, SHA-256 hash calculation, `NewGenesisBlock`, and `NewNextBlock` helpers.
+- **Migration Management**: `MigrateUp` and `MigrateDown` schema management using `neat`.
+- **Rich Querying**: Flexible block listing options including filtering by ID, limit, offset, and sorting.
 
 ## Installation
 
@@ -48,25 +49,28 @@ func main() {
 
 	ctx := context.Background()
 
-	// Create a new block
-	block := blockchainstore.NewBlock()
-	block.SetData("Hello Blockchain")
-	block.SetPreviousHash("0000000000000000000000000000000000000000000000000000000000000000")
-	block.SetThisHash("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+	// Create a new genesis block using fluent setters and built-in hash calculation
+	block := blockchainstore.NewGenesisBlock("Hello Blockchain")
 
 	if err := store.BlockCreate(ctx, block); err != nil {
 		log.Fatal(err)
 	}
 
-	fmt.Printf("Block Created! ID: %s\n", block.ID())
+	fmt.Printf("Block Created! ID: %s, Hash: %s\n", block.GetID(), block.ThisHash())
+
+	// Create next block in the chain
+	nextBlock := blockchainstore.NewNextBlock(block, "Second Transaction")
+	if err := store.BlockCreate(ctx, nextBlock); err != nil {
+		log.Fatal(err)
+	}
 
 	// Retrieve the block
-	found, err := store.BlockFindByID(ctx, block.ID())
+	found, err := store.BlockFindByID(ctx, nextBlock.GetID())
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	fmt.Printf("Retrieved Block Data: %s\n", found.Data())
+	fmt.Printf("Retrieved Next Block Data: %s, Previous Hash: %s\n", found.Data(), found.PreviousHash())
 }
 ```
 
