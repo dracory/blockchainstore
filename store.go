@@ -8,10 +8,11 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/doug-martin/goqu/v9"
-	"github.com/dromara/carbon/v2"
 	"github.com/dracory/database"
+	"github.com/dracory/neat"
+	ormcontracts "github.com/dracory/neat/contracts/database/orm"
 	"github.com/dracory/sb"
+	"github.com/dromara/carbon/v2"
 	"github.com/samber/lo"
 )
 
@@ -22,6 +23,7 @@ var _ StoreInterface = (*Store)(nil) // verify it extends the interface
 type Store struct {
 	blockTableName     string
 	db                 *sql.DB
+	neatDB             *neat.Database
 	dbDriverName       string
 	timeoutSeconds     int64
 	automigrateEnabled bool
@@ -56,20 +58,12 @@ func (store *Store) BlockCreate(ctx context.Context, block *Block) error {
 
 	data := blockToMap(block)
 
-	sqlStr, sqlParams, errSql := goqu.Dialect(store.dbDriverName).
-		Insert(store.blockTableName).
-		Prepared(true).
-		Rows(data).
-		ToSQL()
+	query := store.neatDB.Query().Table(store.blockTableName)
+	sqlStr := query.ToRawSql().Create(data)
 
-	if errSql != nil {
-		return errSql
-	}
+	store.logSql("insert", sqlStr)
 
-	store.logSql("insert", sqlStr, sqlParams...)
-
-	_, err := database.Execute(store.toQuerableContext(ctx), sqlStr, sqlParams...)
-
+	_, err := database.Execute(store.toQuerableContext(ctx), sqlStr)
 	if err != nil {
 		return err
 	}
@@ -92,19 +86,12 @@ func (store *Store) BlockDeleteByID(ctx context.Context, id string) error {
 		return errors.New("block id is empty")
 	}
 
-	sqlStr, sqlParams, errSql := goqu.Dialect(store.dbDriverName).
-		Delete(store.blockTableName).
-		Prepared(true).
-		Where(goqu.C("id").Eq(id)).
-		ToSQL()
+	query := store.neatDB.Query().Table(store.blockTableName).Where("id = ?", id)
+	sqlStr := query.ToRawSql().Delete()
 
-	if errSql != nil {
-		return errSql
-	}
+	store.logSql("delete", sqlStr)
 
-	store.logSql("delete", sqlStr, sqlParams...)
-
-	_, err := database.Execute(store.toQuerableContext(ctx), sqlStr, sqlParams...)
+	_, err := database.Execute(store.toQuerableContext(ctx), sqlStr)
 
 	return err
 }
@@ -133,15 +120,11 @@ func (store *Store) BlockFindByID(ctx context.Context, id string) (*Block, error
 func (store *Store) BlockList(ctx context.Context, options BlockQueryOptions) ([]Block, error) {
 	q := store.blockQuery(options)
 
-	sqlStr, sqlParams, errSql := q.Select().Prepared(true).ToSQL()
+	sqlStr := q.ToRawSql().Get(nil)
 
-	if errSql != nil {
-		return []Block{}, nil
-	}
+	store.logSql("select", sqlStr)
 
-	store.logSql("select", sqlStr, sqlParams...)
-
-	modelMaps, err := database.SelectToMapString(store.toQuerableContext(ctx), sqlStr, sqlParams...)
+	modelMaps, err := database.SelectToMapString(store.toQuerableContext(ctx), sqlStr)
 	if err != nil {
 		return []Block{}, err
 	}
@@ -156,32 +139,10 @@ func (store *Store) BlockList(ctx context.Context, options BlockQueryOptions) ([
 	return list, nil
 }
 
-// func (store *Store) ExamSoftDelete(exam *Exam) error {
-// 	if exam == nil {
-// 		return errors.New("exam is nil")
-// 	}
-
-// 	exam.SetDeletedAt(carbon.Now(carbon.UTC).ToDateTimeString(carbon.UTC))
-
-// 	return store.ExamUpdate(exam)
-// }
-
-// func (store *Store) ExamSoftDeleteByID(id string) error {
-// 	exam, err := store.ExamFindByID(id)
-
-// 	if err != nil {
-// 		return err
-// 	}
-
-// 	return store.ExamSoftDelete(exam)
-// }
-
 func (store *Store) BlockUpdate(ctx context.Context, block *Block) error {
 	if block == nil {
 		return errors.New("order is nil")
 	}
-
-	// block.SetUpdatedAt(carbon.Now(carbon.UTC).ToDateTimeString())
 
 	rawChanged := block.DataChanged()
 	dataChanged := map[string]interface{}{}
@@ -196,50 +157,32 @@ func (store *Store) BlockUpdate(ctx context.Context, block *Block) error {
 		return nil
 	}
 
-	sqlStr, sqlParams, errSql := goqu.Dialect(store.dbDriverName).
-		Update(store.blockTableName).
-		Prepared(true).
-		Set(dataChanged).
-		Where(goqu.C("id").Eq(block.ID())).
-		ToSQL()
+	query := store.neatDB.Query().Table(store.blockTableName).Where("id = ?", block.ID())
+	sqlStr := query.ToRawSql().Update(dataChanged)
 
-	if errSql != nil {
-		return errSql
-	}
+	store.logSql("update", sqlStr)
 
-	store.logSql("update", sqlStr, sqlParams...)
-
-	_, err := database.Execute(store.toQuerableContext(ctx), sqlStr, sqlParams...)
+	_, err := database.Execute(store.toQuerableContext(ctx), sqlStr)
 
 	block.MarkAsNotDirty()
 
 	return err
 }
 
-func (store *Store) blockQuery(options BlockQueryOptions) *goqu.SelectDataset {
-	q := goqu.
-		Dialect(store.dbDriverName).
-		From(store.blockTableName)
+func (store *Store) blockQuery(options BlockQueryOptions) ormcontracts.Query {
+	q := store.neatDB.Query().Table(store.blockTableName)
 
 	if options.ID != "" {
-		q = q.Where(goqu.C("id").Eq(options.ID))
+		q = q.Where("id = ?", options.ID)
 	}
-
-	// if options.Status != "" {
-	// 	q = q.Where(goqu.C("status").Eq(options.Status))
-	// }
-
-	// if len(options.StatusIn) > 0 {
-	// 	q = q.Where(goqu.C("status").In(options.StatusIn))
-	// }
 
 	if !options.CountOnly {
 		if options.Limit > 0 {
-			q = q.Limit(uint(options.Limit))
+			q = q.Limit(options.Limit)
 		}
 
 		if options.Offset > 0 {
-			q = q.Offset(uint(options.Offset))
+			q = q.Offset(options.Offset)
 		}
 	}
 
@@ -250,24 +193,22 @@ func (store *Store) blockQuery(options BlockQueryOptions) *goqu.SelectDataset {
 
 	if options.OrderBy != "" {
 		if strings.EqualFold(sortOrder, sb.ASC) {
-			q = q.Order(goqu.I(options.OrderBy).Asc())
+			q = q.OrderBy(options.OrderBy, "asc")
 		} else {
-			q = q.Order(goqu.I(options.OrderBy).Desc())
+			q = q.OrderBy(options.OrderBy, "desc")
 		}
 	}
 
 	if !options.WithDeleted {
-		q = q.Where(goqu.C("deleted_at").Eq(sb.NULL_DATETIME))
+		q = q.Where("deleted_at = ?", sb.NULL_DATETIME)
 	}
 
 	return q
 }
 
 type BlockQueryOptions struct {
-	ID   string
-	IDIn []string
-	// Status      string
-	// StatusIn    []string
+	ID          string
+	IDIn        []string
 	Offset      int
 	Limit       int
 	SortOrder   string

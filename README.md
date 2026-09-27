@@ -4,7 +4,7 @@
 
 ## Features
 
-- **Database Agnostic SQL Store**: Works with various SQL drivers supported by `goqu`.
+- **Database Agnostic SQL Store**: Uses `dracory/neat` for SQL query generation across various database drivers.
 - **Auto Migration**: Automatically creates and manages the block store database table schema.
 - **Rich Querying**: Flexible block listing options including filtering by ID, limit, offset, sorting, and soft deletion.
 - **Clean Block Abstraction**: Methods for reading and writing block header fields (`PreviousHash`, `ThisHash`, `Data`, `Timestamp`, etc.).

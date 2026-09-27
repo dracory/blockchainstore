@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 
+	"github.com/dracory/neat"
 	"github.com/dracory/sb"
 )
 
@@ -31,10 +32,16 @@ func NewStore(opts NewStoreOptions) (*Store, error) {
 		opts.DbDriverName = sb.DatabaseDriverName(opts.DB)
 	}
 
+	neatDB, err := neat.NewFromSQLDB(opts.DB)
+	if err != nil {
+		return nil, err
+	}
+
 	store := &Store{
 		blockTableName:     opts.BlockTableName,
 		automigrateEnabled: opts.AutomigrateEnabled,
 		db:                 opts.DB,
+		neatDB:             neatDB,
 		dbDriverName:       opts.DbDriverName,
 		debugEnabled:       opts.DebugEnabled,
 	}
