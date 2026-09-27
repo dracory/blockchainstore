@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/gouniverse/blockchainstore"
+	"github.com/dracory/blockchainstore"
 	_ "modernc.org/sqlite"
 )
 

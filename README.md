@@ -12,7 +12,7 @@
 ## Installation
 
 ```bash
-go get github.com/gouniverse/blockchainstore
+go get github.com/dracory/blockchainstore
 ```
 
 ## Quick Start
@@ -26,7 +26,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/gouniverse/blockchainstore"
+	"github.com/dracory/blockchainstore"
 	_ "modernc.org/sqlite"
 )
 
