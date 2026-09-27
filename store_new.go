@@ -5,7 +5,6 @@ import (
 	"errors"
 
 	"github.com/dracory/neat"
-	"github.com/dracory/sb"
 )
 
 // NewStoreOptions define the options for creating a new block store
@@ -28,10 +27,6 @@ func NewStore(opts NewStoreOptions) (*Store, error) {
 		return nil, errors.New("block store: DB is required")
 	}
 
-	if opts.DbDriverName == "" {
-		opts.DbDriverName = sb.DatabaseDriverName(opts.DB)
-	}
-
 	neatDB, err := neat.NewFromSQLDB(opts.DB)
 	if err != nil {
 		return nil, err
@@ -40,16 +35,16 @@ func NewStore(opts NewStoreOptions) (*Store, error) {
 	store := &Store{
 		blockTableName:     opts.BlockTableName,
 		automigrateEnabled: opts.AutomigrateEnabled,
-		db:                 opts.DB,
-		neatDB:             neatDB,
-		dbDriverName:       opts.DbDriverName,
+		db:                 neatDB,
 		debugEnabled:       opts.DebugEnabled,
 	}
 
 	store.timeoutSeconds = 2 * 60 * 60 // 2 hours
 
 	if store.automigrateEnabled {
-		store.AutoMigrate()
+		if err := store.AutoMigrate(); err != nil {
+			return nil, err
+		}
 	}
 
 	return store, nil
